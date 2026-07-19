@@ -8,10 +8,14 @@ from urllib.parse import urlparse
 _db_url = settings.DATABASE_URL
 _connect_args = {}
 if ".supabase.co" in _db_url or ".supabase.com" in _db_url or "ssl=require" in _db_url or "sslmode=require" in _db_url:
-    # asyncpg expects connect_args={"ssl": ssl_context or True} rather than ?sslmode=require query params
+    # asyncpg expects connect_args={"ssl": ssl_context} rather than ?sslmode=require query params
+    # Supabase pooler uses self-signed cert chain — disable verification
     if "?" in _db_url:
         _db_url = _db_url.split("?")[0]
-    _connect_args["ssl"] = True
+    _ssl_ctx = ssl.create_default_context()
+    _ssl_ctx.check_hostname = False
+    _ssl_ctx.verify_mode = ssl.CERT_NONE
+    _connect_args["ssl"] = _ssl_ctx
 
 engine = create_async_engine(
     _db_url,
