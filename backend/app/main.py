@@ -27,8 +27,8 @@ logger = structlog.get_logger()
 async def lifespan(app: FastAPI):
     logger.info("etair_startup", env=settings.ENVIRONMENT)
     # In dev: auto-create tables. In prod: use Alembic.
-    if settings.ENVIRONMENT == "development":
-        await create_tables()
+    # Auto-create tables in both dev and prod (idempotent — safe to run every startup)
+    await create_tables()
     yield
     logger.info("etair_shutdown")
 
@@ -45,7 +45,13 @@ app = FastAPI(
 # ─── CORS ─────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:3001",
+        "https://*.vercel.app",
+        "https://etair-2-umiamkesher.vercel.app",
+        "https://etair-umiamkesher.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
