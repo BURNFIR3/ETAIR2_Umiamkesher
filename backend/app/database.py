@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 # Handle Supabase/remote Postgres SSL parameters for asyncpg
 _db_url = settings.DATABASE_URL
 _connect_args = {}
-if ".supabase.co" in _db_url or "ssl=require" in _db_url or "sslmode=require" in _db_url:
+if ".supabase.co" in _db_url or ".supabase.com" in _db_url or "ssl=require" in _db_url or "sslmode=require" in _db_url:
     # asyncpg expects connect_args={"ssl": ssl_context or True} rather than ?sslmode=require query params
     if "?" in _db_url:
         _db_url = _db_url.split("?")[0]
