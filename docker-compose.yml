@@ -1,0 +1,175 @@
+
+services:
+  # ─── PostgreSQL with pgvector ─────────────────────────────────────────────
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: etair_postgres
+    environment:
+      POSTGRES_DB: etair
+      POSTGRES_USER: etair
+      POSTGRES_PASSWORD: etair_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U etair"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ─── Redis ────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: etair_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ─── MinIO (S3-compatible object storage) ────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: etair_minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: etair_minio
+      MINIO_ROOT_PASSWORD: etair_minio_secret
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── MinIO bucket initializer ─────────────────────────────────────────────
+  minio_init:
+    image: minio/mc:latest
+    container_name: etair_minio_init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set minio http://minio:9000 etair_minio etair_minio_secret;
+        mc mb --ignore-existing minio/etair-files;
+        mc mb --ignore-existing minio/etair-thumbnails;
+        mc anonymous set public minio/etair-thumbnails;
+        echo 'MinIO buckets ready.';
+      "
+
+  # ─── FastAPI Backend ──────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: etair_backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    env_file:
+      - ./backend/.env
+    environment:
+      # These override the localhost values from .env with Docker-internal hostnames
+      DATABASE_URL: postgresql+asyncpg://etair:etair_secret@postgres:5432/etair
+      CELERY_DATABASE_URL: postgresql+psycopg2://etair:etair_secret@postgres:5432/etair
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: etair_minio
+      MINIO_SECRET_KEY: etair_minio_secret
+      MINIO_BUCKET_FILES: etair-files
+      MINIO_BUCKET_THUMBS: etair-thumbnails
+      MINIO_SECURE: "false"
+      ENVIRONMENT: development
+      # All API keys (GROQ_API_KEY, OPENAI_API_KEY, etc.) are loaded from env_file above
+    ports:
+      - "8888:8000"
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    working_dir: /app
+
+  # ─── Celery Worker (file processing + RCA agent) ─────────────────────────
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: etair_worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --pool=solo -Q file_processing
+    env_file:
+      - ./backend/.env
+    environment:
+      # Docker-internal hostname overrides
+      DATABASE_URL: postgresql+asyncpg://etair:etair_secret@postgres:5432/etair
+      CELERY_DATABASE_URL: postgresql+psycopg2://etair:etair_secret@postgres:5432/etair
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: etair_minio
+      MINIO_SECRET_KEY: etair_minio_secret
+      MINIO_BUCKET_FILES: etair-files
+      MINIO_BUCKET_THUMBS: etair-thumbnails
+      MINIO_SECURE: "false"
+      ENVIRONMENT: development
+      # All API keys loaded from env_file above
+    volumes:
+      - ./backend:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    working_dir: /app
+
+  # ─── Celery Beat (scheduled tasks) ────────────────────────────────────────
+  beat:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: etair_beat
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
+    environment:
+      # Docker-internal hostname overrides
+      DATABASE_URL: postgresql+asyncpg://etair:etair_secret@postgres:5432/etair
+      CELERY_DATABASE_URL: postgresql+psycopg2://etair:etair_secret@postgres:5432/etair
+      REDIS_URL: redis://redis:6379/0
+      ENVIRONMENT: development
+      # All API keys loaded from env_file above
+    volumes:
+      - ./backend:/app
+    depends_on:
+      - redis
+    working_dir: /app
+
+  # ─── Frontend (Next.js) ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: etair_frontend
+    command: npm run dev
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8888
+      NODE_ENV: development
+      WATCHPACK_POLLING: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  minio_data:

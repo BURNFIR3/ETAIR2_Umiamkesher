@@ -1,0 +1,141 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --surface-0: #0d0e1a;
+    --surface-1: #13152b;
+    --surface-2: #1a1d38;
+    --surface-3: #222645;
+    --surface-4: #2a2f54;
+    --border: #2e3460;
+    --muted: #8b92b8;
+    --brand: #6272f3;
+    --brand-light: #a5b8fc;
+  }
+
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+
+  html, body {
+    @apply bg-surface-0 text-white;
+    font-family: 'Inter', system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--brand);
+  }
+}
+
+@layer components {
+  /* ── Cards ─────────────────────────────────────────────── */
+  .card {
+    @apply bg-surface-1 border border-border rounded-xl p-6;
+  }
+
+  .card-hover {
+    @apply card transition-all duration-200 hover:border-brand-400/40 hover:shadow-glow-sm cursor-pointer;
+  }
+
+  /* ── Buttons ────────────────────────────────────────────── */
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150 disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-brand-600 text-white hover:bg-brand-500 shadow-glow-sm hover:shadow-glow active:scale-95;
+  }
+
+  .btn-secondary {
+    @apply btn bg-surface-3 text-white border border-border hover:bg-surface-4 hover:border-brand-400/50 active:scale-95;
+  }
+
+  .btn-ghost {
+    @apply btn text-muted hover:text-white hover:bg-surface-2 active:scale-95;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-900/40 text-red-300 border border-red-800/50 hover:bg-red-800/60 active:scale-95;
+  }
+
+  /* ── Inputs ─────────────────────────────────────────────── */
+  .input {
+    @apply w-full bg-surface-2 border border-border rounded-lg px-3 py-2 text-sm text-white placeholder-muted
+           focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500/50 transition-all duration-150;
+  }
+
+  .label {
+    @apply block text-sm font-medium text-muted mb-1;
+  }
+
+  /* ── Badges ─────────────────────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-blue { @apply badge bg-brand-900/50 text-brand-300 border border-brand-700/50; }
+  .badge-green { @apply badge bg-emerald-900/50 text-emerald-300 border border-emerald-700/50; }
+  .badge-yellow { @apply badge bg-amber-900/50 text-amber-300 border border-amber-700/50; }
+  .badge-red { @apply badge bg-red-900/50 text-red-300 border border-red-700/50; }
+  .badge-gray { @apply badge bg-surface-3 text-muted border border-border; }
+  .badge-purple { @apply badge bg-purple-900/50 text-purple-300 border border-purple-700/50; }
+
+  /* ── Sidebar ─────────────────────────────────────────────── */
+  .sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted hover:text-white hover:bg-surface-2 transition-all duration-150 cursor-pointer;
+  }
+
+  .sidebar-item-active {
+    @apply sidebar-item text-white bg-surface-2 border border-border font-medium;
+  }
+
+  /* ── Table ───────────────────────────────────────────────── */
+  .table-header {
+    @apply text-xs font-medium text-muted uppercase tracking-wider;
+  }
+
+  /* ── Status dots ─────────────────────────────────────────── */
+  .status-dot {
+    @apply w-2 h-2 rounded-full inline-block;
+  }
+
+  /* ── Glassmorphism ───────────────────────────────────────── */
+  .glass {
+    @apply backdrop-blur-md bg-white/5 border border-white/10;
+  }
+
+  /* ── Processing spinner ──────────────────────────────────── */
+  .processing-ring {
+    @apply border-2 border-brand-500/20 border-t-brand-500 rounded-full animate-spin;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    background: linear-gradient(135deg, #6272f3, #a855f7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .bg-mesh {
+    background-image:
+      radial-gradient(at 20% 50%, rgba(98, 114, 243, 0.08) 0px, transparent 50%),
+      radial-gradient(at 80% 20%, rgba(168, 85, 247, 0.06) 0px, transparent 50%);
+  }
+}
