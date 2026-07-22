@@ -151,10 +151,10 @@ async def upload_file(
         )
         # Run the processing pipeline synchronously in a background thread
         # so the async event loop is not blocked.
-        # .run() calls the underlying Celery task function directly without a broker.
+        # Calling the task object directly handles the `bind=True` self injection.
         _file_id_str = str(db_file.file_id)
         loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, process_file_task.run, _file_id_str)
+        loop.run_in_executor(None, process_file_task, _file_id_str)
 
     return db_file
 
