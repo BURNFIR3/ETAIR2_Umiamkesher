@@ -271,16 +271,20 @@ def _save_chunks(db: Session, file_id: UUID, chunks: List[Dict]) -> List:
     return records
 
 _embedding_model = None
+import threading
+_embedding_lock = threading.Lock()
 
 def get_embedding_model():
     global _embedding_model
-    if _embedding_model is None:
-        from fastembed import TextEmbedding
-        # Use 4 threads to prevent CPU lockups (1500% -> ~350%) while keeping high throughput
-        _embedding_model = TextEmbedding(
-            model_name=settings.LOCAL_EMBEDDING_MODEL,
-            threads=4
-        )
+    with _embedding_lock:
+        if _embedding_model is None:
+            from fastembed import TextEmbedding
+            # Use 1 thread to prevent ONNX Runtime deadlocks when initialized 
+            # inside a ThreadPoolExecutor (Render Free only has 1 vCPU anyway).
+            _embedding_model = TextEmbedding(
+                model_name=settings.LOCAL_EMBEDDING_MODEL,
+                threads=1
+            )
     return _embedding_model
 
 
