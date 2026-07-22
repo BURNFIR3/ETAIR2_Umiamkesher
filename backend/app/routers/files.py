@@ -8,6 +8,7 @@ from sqlalchemy import or_, select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user, require_workspace_member
+from app.config import settings
 from app.database import get_db
 from app.models import (
     AuditLog, File, FileComment, FileEntity, FileMetadata, FileAccessOverride,
@@ -70,9 +71,17 @@ async def upload_file(
         version_number = 1
         parent_file_id = None
 
-    # Build storage key and upload to MinIO
+    # Build storage key and upload to MinIO / Supabase S3
     storage_key = build_storage_key(str(workspace_id), str(doc_uuid), version_number, file.filename)
-    minio_upload(content, storage_key, mime)
+    try:
+        minio_upload(content, storage_key, mime)
+    except Exception as s3_err:
+        import structlog as _slog
+        _slog.get_logger().error("storage_upload_failed", error=str(s3_err), storage_key=storage_key)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Storage upload failed: {s3_err}. Check MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY and that the '{settings.MINIO_BUCKET_FILES}' bucket exists.",
+        )
 
     # Parse tags and role ACLs
     tag_list = [t.strip() for t in tags.split(",")] if tags else []
@@ -125,8 +134,27 @@ async def upload_file(
     # with {"status": "error", "reason": "file_not_found"} on every upload.
     await db.commit()
 
-    # Dispatch async processing task
-    process_file_task.delay(str(db_file.file_id))
+    # ── Dispatch async processing task ────────────────────────────────────────
+    # Try to send to Celery first. If the broker (Redis) is unavailable —
+    # e.g. on Render Free tier where there is no separate worker process —
+    # fall back to running the pipeline synchronously in a thread-pool executor
+    # so the upload ALWAYS succeeds and the file ALWAYS gets processed.
+    try:
+        process_file_task.delay(str(db_file.file_id))
+    except Exception as celery_err:
+        import asyncio
+        import structlog as _slog
+        _slog.get_logger().warning(
+            "celery_broker_unavailable_running_inline",
+            error=str(celery_err),
+            file_id=str(db_file.file_id),
+        )
+        # Run the processing pipeline synchronously in a background thread
+        # so the async event loop is not blocked.
+        # .run() calls the underlying Celery task function directly without a broker.
+        _file_id_str = str(db_file.file_id)
+        loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, process_file_task.run, _file_id_str)
 
     return db_file
 
@@ -314,7 +342,9 @@ async def update_file_status(
     if not f:
         raise HTTPException(status_code=404, detail="File not found")
 
-    my_role = await require_workspace_member(current_user, f.workspace_id, db, min_role="document_controller")
+    # Require at least Level-2 authority (i.e. level <= 2) to change document status.
+    # Level 1 = top member / admin; level 2 = document controller equivalent.
+    _, _, my_level = await require_workspace_member(current_user, f.workspace_id, db, max_level=2)
 
     f.status = payload.status
     await db.flush()
@@ -324,6 +354,77 @@ async def update_file_status(
         file_id=f.file_id,
         workspace_id=f.workspace_id,
         action=f"status_change:{payload.status}",
+    ))
+    return f
+
+
+@router.get("/workspace/{workspace_id}/archived", response_model=List[FileOut])
+async def list_archived_files(
+    workspace_id: UUID,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Return all archived files in the workspace that the current user can access.
+    Archived files are excluded from regular retrieval but can be viewed here
+    by any workspace member, and restored by Level-1/2 members.
+    """
+    role_id, _, my_level = await require_workspace_member(current_user, workspace_id, db)
+
+    accessible_ids = await get_accessible_file_ids_any_status(
+        db, current_user.user_id, workspace_id, my_level, role_id
+    )
+
+    q = (
+        select(File)
+        .where(
+            File.workspace_id == workspace_id,
+            File.file_id.in_(accessible_ids),
+            File.status == "archived",
+        )
+        .order_by(File.upload_ts.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    result = await db.execute(q)
+    return result.scalars().all()
+
+
+@router.post("/{file_id}/restore", response_model=FileOut)
+async def restore_file(
+    file_id: UUID,
+    current_user=Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Restore a previously archived file back to 'draft' status.
+    Requires Level-1 or Level-2 authority (document controller equivalent).
+    An audit log entry is recorded for governance traceability.
+    """
+    result = await db.execute(select(File).where(File.file_id == file_id))
+    f = result.scalar_one_or_none()
+    if not f:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    _, _, my_level = await require_workspace_member(current_user, f.workspace_id, db, max_level=2)
+
+    if f.status != "archived":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only archived files can be restored. Current status: '{f.status}'.",
+        )
+
+    f.status = "draft"
+    await db.flush()
+
+    db.add(AuditLog(
+        user_id=current_user.user_id,
+        file_id=f.file_id,
+        workspace_id=f.workspace_id,
+        action="status_change:draft",
+        extra={"restored_from": "archived"},
     ))
     return f
 
