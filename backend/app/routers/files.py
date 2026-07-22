@@ -135,43 +135,27 @@ async def upload_file(
     await db.commit()
 
     # ── Dispatch async processing task ────────────────────────────────────────
-    # Check if there is an active Celery worker listening.
-    # On Render Free Web Service deployments, users often provide a valid Upstash REDIS_URL 
-    # but don't deploy a separate Celery worker. In that case, `.delay()` succeeds and queues 
-    # the task in Redis indefinitely.
-    has_workers = False
-    try:
-        from app.workers.celery_app import celery_app
-        # Ping workers with a 0.5s timeout.
-        # Returns [] if broker is up but no workers attached.
-        # Raises exception if broker is down.
-        ping_result = celery_app.control.ping(timeout=0.5)
-        has_workers = bool(ping_result)
-    except Exception as ping_err:
-        import structlog as _slog
-        _slog.get_logger().warning("celery_broker_ping_failed", error=str(ping_err))
-        has_workers = False
+    # For single-container deployments (like Render Free), relying on Celery 
+    # can cause tasks to vanish if the user reuses a Redis instance that has 
+    # workers from other projects. To guarantee execution, we bypass Celery 
+    # and run the pipeline locally in a managed background thread.
+    
+    import asyncio
+    import structlog as _slog
+    
+    def _run_inline_sync(fid: str):
+        try:
+            # Calling the task object directly handles the `bind=True` self injection.
+            process_file_task(fid)
+        except Exception as e:
+            _slog.get_logger().error("inline_processing_fatal_error", file_id=fid, error=str(e), exc_info=True)
 
-    if has_workers:
-        process_file_task.delay(str(db_file.file_id))
-    else:
-        import asyncio
-        import structlog as _slog
-        _slog.get_logger().info(
-            "no_celery_workers_found_running_inline",
-            file_id=str(db_file.file_id)
-        )
-        
-        def _run_inline(fid: str):
-            try:
-                # Calling the task object directly handles the `bind=True` self injection.
-                process_file_task(fid)
-            except Exception as e:
-                _slog.get_logger().error("inline_processing_fatal_error", file_id=fid, error=str(e), exc_info=True)
-                
-        _file_id_str = str(db_file.file_id)
-        loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, _run_inline, _file_id_str)
+    async def _dispatch_background(fid: str):
+        _slog.get_logger().info("dispatching_local_background_task", file_id=fid)
+        await asyncio.to_thread(_run_inline_sync, fid)
+
+    _file_id_str = str(db_file.file_id)
+    asyncio.create_task(_dispatch_background(_file_id_str))
 
     return db_file
 
